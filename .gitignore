@@ -1,0 +1,5 @@
+lfw_imgs/*
+lfw_imgs/*/*
+lfw_imgs/*/*/*
+datasets/*.hdf5
+

@@ -130,14 +130,17 @@ function adversarial.train(dataset, N)
 
       gradParameters_D:zero() -- reset gradients
 
-      --  forward pass
+      -- forward inputs,  which contain half fake half real to D, let D computes the error and back-prop
       local outputs = model_D:forward(inputs)
      -- err_F = criterion:forward(outputs:narrow(1, 1, opt.batchSize / 2), targets:narrow(1, 1, opt.batchSize / 2))
      -- err_R = criterion:forward(outputs:narrow(1, (opt.batchSize / 2) + 1, opt.batchSize / 2), targets:narrow(1, (opt.batchSize / 2) + 1, opt.batchSize / 2))
      err_R = criterion:forward(outputs:narrow(1, 1, opt.batchSize / 2), targets:narrow(1, 1, opt.batchSize / 2))
      err_F = criterion:forward(outputs:narrow(1, (opt.batchSize / 2) + 1, opt.batchSize / 2), targets:narrow(1, (opt.batchSize / 2) + 1, opt.batchSize / 2))
     
-    local margin = 0.3
+      -- when D still performs good enough, that is, the error is less than 0.3, we stop optimizing D (wait for G to get better)
+      -- when G is good enough, we stop opt G, and wait for D to get better
+      -- when both are stopped, we resume opt for both
+      local margin = 0.3
       sgdState_D.optimize = true
       sgdState_G.optimize = true      
       if err_F < margin or err_R < margin then
@@ -153,7 +156,7 @@ function adversarial.train(dataset, N)
 
   
       --print(monA:size(), tarA:size())
-      io.write("v1_lfw| R:", err_R,"  F:", err_F, "  ")
+      --io.write("v1_lfw| R:", err_R,"  F:", err_F, "  ")
       local f = criterion:forward(outputs, targets)
 
       -- backward pass 
@@ -167,6 +170,7 @@ function adversarial.train(dataset, N)
         f = f + opt.coefL1 * norm(parameters_D,1)
         f = f + opt.coefL2 * norm(parameters_D,2)^2/2
         -- Gradients:
+        -- add grads of the regularizations to the original grads, we don't want D to overfit
         gradParameters_D:add( sign(parameters_D):mul(opt.coefL1) + parameters_D:clone():mul(opt.coefL2) )
       end
       -- update confusion (add 1 since targets are binary)
@@ -190,26 +194,31 @@ function adversarial.train(dataset, N)
       gradParameters_G:zero() -- reset gradients
 
       -- forward pass
+      -- foward z = N(0,1) noises of size batch * dim to G
+      -- and further to D, to get fake_samples, so the loss is log(1 - D(G(z)))
       local samples = model_G:forward(noise_inputs)
       local outputs = model_D:forward(samples)
       local f = criterion:forward(outputs, targets)
-     io.write("G:",f, " G:", tostring(sgdState_G.optimize)," D:",tostring(sgdState_D.optimize)," ", sgdState_G.numUpdates, " ", sgdState_D.numUpdates , "\n")
-      io.flush()
+      --io.write("G:",f, " G:", tostring(sgdState_G.optimize)," D:",tostring(sgdState_D.optimize)," ", sgdState_G.numUpdates, " ", sgdState_D.numUpdates , "\n")
+      --io.flush()
 
       --  backward pass
+      --  through D first
       local df_samples = criterion:backward(outputs, targets)
       model_D:backward(samples, df_samples)
+      --  and then through G, the last grad to backward for G is the first grad of D
       local df_do = model_D.modules[1].gradInput
       model_G:backward(noise_inputs, df_do)
-      print('gradParameters_G', gradParameters_G:norm())
+      --print('gradParameters_G', gradParameters_G:norm())
       return f,gradParameters_G
     end
 
     ----------------------------------------------------------------------
     -- (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
     -- Get half a minibatch of real, half fake
+    -- K is the number of repetitions for optimize D, for each batch
     for k=1,opt.K do
-      -- (1.1) Real data 
+      -- (1.1) Real data (fill up the real data of size batch_size/2)
       local k = 1
       for i = t,math.min(t+dataBatchSize-1,dataset:size()[1]) do
         local idx = math.random(dataset:size()[1])
@@ -218,7 +227,7 @@ function adversarial.train(dataset, N)
         k = k + 1
       end
       targets[{{1,dataBatchSize}}]:fill(1)
-      -- (1.2) Sampled data
+      -- (1.2) Sampled data (fill up the fake data of size batch_size/2)
       noise_inputs:normal(0, 1)
       local samples = model_G:forward(noise_inputs[{{dataBatchSize+1,opt.batchSize}}])
       for i = 1, dataBatchSize do

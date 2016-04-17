@@ -189,7 +189,7 @@ end
 
 -- training loop
 while true do
-  local to_plot = getSamples(valData, 100)
+  local to_plot = getSamples(valData, 10)
   torch.setdefaulttensortype('torch.FloatTensor')
 
   trainLogger:style{['% mean class accuracy (train set)'] = '-'}
